@@ -30,6 +30,7 @@ const DefaultFillPercent = 0.5
 type Bucket struct {
 	*common.InBucket
 	tx       *Tx                   // the associated transaction
+	name     []byte                // the name of this bucket
 	parent   *Bucket               // the bucket containing this bucket, if any
 	buckets  map[string]*Bucket    // subbucket cache
 	page     *common.Page          // inline page reference
@@ -45,11 +46,11 @@ type Bucket struct {
 }
 
 // newBucket returns a new bucket associated with a transaction.
-func newBucket(tx *Tx, parent *Bucket) Bucket {
+func newBucket(tx *Tx, name []byte, parent *Bucket) Bucket {
 	if parent == &tx.root {
 		parent = nil
 	}
-	var b = Bucket{tx: tx, parent: parent, FillPercent: DefaultFillPercent}
+	var b = Bucket{tx: tx, name: name, parent: parent, FillPercent: DefaultFillPercent}
 	if tx.writable {
 		b.buckets = make(map[string]*Bucket)
 		b.nodes = make(map[common.Pgid]*node)
@@ -66,6 +67,12 @@ func (b *Bucket) Tx() *Tx {
 // root bucket.
 func (b *Bucket) Parent() *Bucket {
 	return b.parent
+}
+
+// Name returns the name of this bucket.  The result is only valid for the
+// lifetime of this transaction.
+func (b *Bucket) Name() []byte {
+	return b.name
 }
 
 // Root returns the root of the bucket.
@@ -112,7 +119,7 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 	}
 
 	// Otherwise create a bucket and cache it.
-	var child = b.openBucket(v)
+	var child = b.openBucket(k, v)
 	if b.buckets != nil {
 		b.buckets[string(name)] = child
 	}
@@ -122,8 +129,8 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 
 // Helper method that re-interprets a sub-bucket value
 // from a parent into a Bucket
-func (b *Bucket) openBucket(value []byte) *Bucket {
-	var child = newBucket(b.tx, b)
+func (b *Bucket) openBucket(name []byte, value []byte) *Bucket {
+	var child = newBucket(b.tx, name, b)
 
 	// Unaligned access requires a copy to be made.
 	const unalignedMask = unsafe.Alignof(struct {
@@ -250,7 +257,7 @@ func (b *Bucket) CreateBucketIfNotExists(key []byte) (rb *Bucket, err error) {
 	// Return an error if there is an existing non-bucket key.
 	if bytes.Equal(newKey, k) {
 		if (flags & common.BucketLeafFlag) != 0 {
-			var child = b.openBucket(v)
+			var child = b.openBucket(k, v)
 			if b.buckets != nil {
 				b.buckets[string(newKey)] = child
 			}
@@ -665,7 +672,7 @@ func (b *Bucket) Stats() BucketStats {
 					if (e.Flags() & common.BucketLeafFlag) != 0 {
 						// For any bucket element, open the element value
 						// and recursively call Stats on the contained bucket.
-						subStats.Add(b.openBucket(e.Value()).Stats())
+						subStats.Add(b.openBucket(nil, e.Value()).Stats())
 					}
 				}
 			}

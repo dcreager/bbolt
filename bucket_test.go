@@ -39,6 +39,24 @@ func TestBucket_Root_NoParent(t *testing.T) {
 	}
 }
 
+// Ensure that a bucket remembers its name.
+func TestBucket_Root_Name(t *testing.T) {
+	db := btesting.MustCreateDB(t)
+
+	if err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("widgets"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := b.Name(); !bytes.Equal(n, []byte("widgets")) {
+			t.Fatalf("unexpected name: %v", n)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Ensure that a bucket that gets a non-existent key returns nil.
 func TestBucket_Get_NonExistent(t *testing.T) {
 	db := btesting.MustCreateDB(t)
@@ -496,6 +514,10 @@ func TestBucket_Nested(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		if n := b.Name(); !bytes.Equal(n, []byte("widgets")) {
+			t.Fatalf("unexpected name: %v", n)
+		}
+
 		// Create a widgets/foo bucket.
 		c, err := b.CreateBucket([]byte("foo"))
 		if err != nil {
@@ -504,6 +526,10 @@ func TestBucket_Nested(t *testing.T) {
 
 		if p := c.Parent(); p != b {
 			t.Fatal("unexpected parent for child bucket")
+		}
+
+		if n := c.Name(); !bytes.Equal(n, []byte("foo")) {
+			t.Fatalf("unexpected name: %v", n)
 		}
 
 		// Create a widgets/bar key.
