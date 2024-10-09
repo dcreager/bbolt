@@ -54,7 +54,7 @@ func (tx *Tx) init(db *DB) {
 	db.meta().Copy(tx.meta)
 
 	// Copy over the root bucket.
-	tx.root = newBucket(tx, nil)
+	tx.root = newBucket(tx, nil, nil)
 	tx.root.InBucket = &common.InBucket{}
 	*tx.root.InBucket = *(tx.meta.RootBucket())
 
