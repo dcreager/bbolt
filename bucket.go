@@ -30,6 +30,7 @@ const DefaultFillPercent = 0.5
 type Bucket struct {
 	*common.InBucket
 	tx       *Tx                   // the associated transaction
+	parent   *Bucket               // the bucket containing this bucket, if any
 	buckets  map[string]*Bucket    // subbucket cache
 	page     *common.Page          // inline page reference
 	rootNode *node                 // materialized node for the root page.
@@ -44,8 +45,11 @@ type Bucket struct {
 }
 
 // newBucket returns a new bucket associated with a transaction.
-func newBucket(tx *Tx) Bucket {
-	var b = Bucket{tx: tx, FillPercent: DefaultFillPercent}
+func newBucket(tx *Tx, parent *Bucket) Bucket {
+	if parent == &tx.root {
+		parent = nil
+	}
+	var b = Bucket{tx: tx, parent: parent, FillPercent: DefaultFillPercent}
 	if tx.writable {
 		b.buckets = make(map[string]*Bucket)
 		b.nodes = make(map[common.Pgid]*node)
@@ -56,6 +60,12 @@ func newBucket(tx *Tx) Bucket {
 // Tx returns the tx of the bucket.
 func (b *Bucket) Tx() *Tx {
 	return b.tx
+}
+
+// Parent returns the parent bucket of this bucket.  Returns nil if this is a
+// root bucket.
+func (b *Bucket) Parent() *Bucket {
+	return b.parent
 }
 
 // Root returns the root of the bucket.
@@ -113,7 +123,7 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 // Helper method that re-interprets a sub-bucket value
 // from a parent into a Bucket
 func (b *Bucket) openBucket(value []byte) *Bucket {
-	var child = newBucket(b.tx)
+	var child = newBucket(b.tx, b)
 
 	// Unaligned access requires a copy to be made.
 	const unalignedMask = unsafe.Alignof(struct {

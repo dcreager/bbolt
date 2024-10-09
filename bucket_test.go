@@ -21,6 +21,24 @@ import (
 	"go.etcd.io/bbolt/internal/btesting"
 )
 
+// Ensure that a root bucket has no parent.
+func TestBucket_Root_NoParent(t *testing.T) {
+	db := btesting.MustCreateDB(t)
+
+	if err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("widgets"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := b.Parent(); p != nil {
+			t.Fatal("expected nil value")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Ensure that a bucket that gets a non-existent key returns nil.
 func TestBucket_Get_NonExistent(t *testing.T) {
 	db := btesting.MustCreateDB(t)
@@ -479,9 +497,13 @@ func TestBucket_Nested(t *testing.T) {
 		}
 
 		// Create a widgets/foo bucket.
-		_, err = b.CreateBucket([]byte("foo"))
+		c, err := b.CreateBucket([]byte("foo"))
 		if err != nil {
 			t.Fatal(err)
+		}
+
+		if p := c.Parent(); p != b {
+			t.Fatal("unexpected parent for child bucket")
 		}
 
 		// Create a widgets/bar key.
