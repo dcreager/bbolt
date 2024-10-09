@@ -59,7 +59,7 @@ func TestBucket_Root_Name(t *testing.T) {
 
 // Ensure that a bucket that gets a non-existent key returns nil.
 func TestBucket_Get_NonExistent(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
@@ -73,11 +73,17 @@ func TestBucket_Get_NonExistent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can read a value that is not flushed yet.
 func TestBucket_Get_FromNode(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
@@ -94,11 +100,18 @@ func TestBucket_Get_FromNode(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket retrieved via Get() returns a nil.
 func TestBucket_Get_IncompatibleValue(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -116,6 +129,13 @@ func TestBucket_Get_IncompatibleValue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/foo)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a slice returned from a bucket has a capacity equal to its length.
@@ -123,7 +143,7 @@ func TestBucket_Get_IncompatibleValue(t *testing.T) {
 //
 // https://github.com/boltdb/bolt/issues/544
 func TestBucket_Get_Capacity(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	// Write key to a bucket.
 	if err := db.Update(func(tx *bolt.Tx) error {
@@ -156,11 +176,20 @@ func TestBucket_Get_Capacity(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(bucket)`,
+		`KeyUpdated(bucket, "key", "val")`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can write a key/value.
 func TestBucket_Put(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -178,11 +207,18 @@ func TestBucket_Put(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can rewrite a key in the same transaction.
 func TestBucket_Put_Repeat(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -203,11 +239,19 @@ func TestBucket_Put_Repeat(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`KeyUpdated(widgets, "foo", "baz")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can write a bunch of large values.
 func TestBucket_Put_Large(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	count, factor := 100, 200
 	if err := db.Update(func(tx *bolt.Tx) error {
@@ -215,11 +259,13 @@ func TestBucket_Put_Large(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		db.Journal.Pause()
 		for i := 1; i < count; i++ {
 			if err := b.Put([]byte(strings.Repeat("0", i*factor)), []byte(strings.Repeat("X", (count-i)*factor))); err != nil {
 				t.Fatal(err)
 			}
 		}
+		db.Journal.Resume()
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -237,6 +283,13 @@ func TestBucket_Put_Large(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`// snip`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a database can perform multiple large appends safely.
@@ -272,7 +325,7 @@ func TestDB_Put_VeryLarge(t *testing.T) {
 
 // Ensure that a setting a value on a key with a bucket value returns an error.
 func TestBucket_Put_IncompatibleValue(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b0, err := tx.CreateBucket([]byte("widgets"))
@@ -290,11 +343,18 @@ func TestBucket_Put_IncompatibleValue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/foo)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a setting a value while the transaction is closed returns an error.
 func TestBucket_Put_Closed(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	tx, err := db.Begin(true)
 	if err != nil {
 		t.Fatal(err)
@@ -312,11 +372,17 @@ func TestBucket_Put_Closed(t *testing.T) {
 	if err := b.Put([]byte("foo"), []byte("bar")); err != berrors.ErrTxClosed {
 		t.Fatalf("unexpected error: %s", err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxRolledBack()`,
+	)
 }
 
 // Ensure that setting a value on a read-only bucket returns an error.
 func TestBucket_Put_ReadOnly(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucket([]byte("widgets")); err != nil {
@@ -336,11 +402,17 @@ func TestBucket_Put_ReadOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can delete an existing key.
 func TestBucket_Delete(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
@@ -360,11 +432,19 @@ func TestBucket_Delete(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`KeyDeleted(widgets, "foo")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that deleting a large set of keys will work correctly.
 func TestBucket_Delete_Large(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
@@ -373,10 +453,14 @@ func TestBucket_Delete_Large(t *testing.T) {
 		}
 
 		for i := 0; i < 100; i++ {
-			if err := b.Put([]byte(strconv.Itoa(i)), []byte(strings.Repeat("*", 1024))); err != nil {
+			if err := b.Put([]byte(strconv.Itoa(i)), []byte(strings.Repeat("*", (i+1)*10))); err != nil {
 				t.Fatal(err)
 			}
+			if i == 1 {
+				db.Journal.Pause()
+			}
 		}
+		db.Journal.Resume()
 
 		return nil
 	}); err != nil {
@@ -389,7 +473,11 @@ func TestBucket_Delete_Large(t *testing.T) {
 			if err := b.Delete([]byte(strconv.Itoa(i))); err != nil {
 				t.Fatal(err)
 			}
+			if i == 1 {
+				db.Journal.Pause()
+			}
 		}
+		db.Journal.Resume()
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -406,6 +494,20 @@ func TestBucket_Delete_Large(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "0", "**********")`,
+		`KeyUpdated(widgets, "1", "********************")`,
+		`// snip`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`KeyDeleted(widgets, "0")`,
+		`KeyDeleted(widgets, "1")`,
+		`// snip`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Deleting a very large list of keys will cause the freelist to use overflow.
@@ -414,6 +516,7 @@ func TestBucket_Delete_FreelistOverflow(t *testing.T) {
 		t.Skip("skipping test in short mode.")
 	}
 
+	// Don't test the journal since it'll be quite large.
 	db := btesting.MustCreateDB(t)
 
 	k := make([]byte, 16)
@@ -473,7 +576,7 @@ func TestBucket_Delete_FreelistOverflow(t *testing.T) {
 
 // Ensure that deleting of non-existing key is a no-op.
 func TestBucket_Delete_NonExisting(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
@@ -501,11 +604,20 @@ func TestBucket_Delete_NonExisting(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/nested)`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that accessing and updating nested buckets is ok across transactions.
 func TestBucket_Nested(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		// Create a widgets bucket.
@@ -558,11 +670,13 @@ func TestBucket_Nested(t *testing.T) {
 	// Cause a split.
 	if err := db.Update(func(tx *bolt.Tx) error {
 		var b = tx.Bucket([]byte("widgets"))
+		db.Journal.Pause()
 		for i := 0; i < 10000; i++ {
 			if err := b.Put([]byte(strconv.Itoa(i)), []byte(strconv.Itoa(i))); err != nil {
 				t.Fatal(err)
 			}
 		}
+		db.Journal.Resume()
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -599,11 +713,28 @@ func TestBucket_Nested(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/foo)`,
+		`KeyUpdated(widgets, "bar", "0000")`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`KeyUpdated(widgets, "bar", "xxxx")`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(4)`,
+		`// snip`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(5)`,
+		`KeyUpdated(widgets/foo, "baz", "yyyy")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that deleting a bucket using Delete() returns an error.
 func TestBucket_Delete_Bucket(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -619,11 +750,18 @@ func TestBucket_Delete_Bucket(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/foo)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that deleting a key on a read-only bucket returns an error.
 func TestBucket_Delete_ReadOnly(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucket([]byte("widgets")); err != nil {
@@ -642,11 +780,17 @@ func TestBucket_Delete_ReadOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a deleting value while the transaction is closed returns an error.
 func TestBucket_Delete_Closed(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	tx, err := db.Begin(true)
 	if err != nil {
@@ -664,11 +808,17 @@ func TestBucket_Delete_Closed(t *testing.T) {
 	if err := b.Delete([]byte("foo")); err != berrors.ErrTxClosed {
 		t.Fatalf("unexpected error: %s", err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxRolledBack()`,
+	)
 }
 
 // Ensure that deleting a bucket causes nested buckets to be deleted.
 func TestBucket_DeleteBucket_Nested(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		widgets, err := tx.CreateBucket([]byte("widgets"))
@@ -695,11 +845,22 @@ func TestBucket_DeleteBucket_Nested(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/foo)`,
+		`BucketCreated(widgets/foo/bar)`,
+		`KeyUpdated(widgets/foo/bar, "baz", "bat")`,
+		`BucketDeleted(widgets/foo/bar)`,
+		`BucketDeleted(widgets/foo)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that deleting a bucket causes nested buckets to be deleted after they have been committed.
 func TestBucket_DeleteBucket_Nested2(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		widgets, err := tx.CreateBucket([]byte("widgets"))
@@ -760,12 +921,26 @@ func TestBucket_DeleteBucket_Nested2(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/foo)`,
+		`BucketCreated(widgets/foo/bar)`,
+		`KeyUpdated(widgets/foo/bar, "baz", "bat")`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`BucketDeleted(widgets/foo/bar)`,
+		`BucketDeleted(widgets/foo)`,
+		`BucketDeleted(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that deleting a child bucket with multiple pages causes all pages to get collected.
 // NOTE: Consistency check in bolt_test.DB.Close() will panic if pages not freed properly.
 func TestBucket_DeleteBucket_Large(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		widgets, err := tx.CreateBucket([]byte("widgets"))
@@ -778,11 +953,13 @@ func TestBucket_DeleteBucket_Large(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		db.Journal.Pause()
 		for i := 0; i < 1000; i++ {
 			if err := foo.Put([]byte(fmt.Sprintf("%d", i)), []byte(fmt.Sprintf("%0100d", i))); err != nil {
 				t.Fatal(err)
 			}
 		}
+		db.Journal.Resume()
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -796,11 +973,23 @@ func TestBucket_DeleteBucket_Large(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(widgets/foo)`,
+		`// snip`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`BucketDeleted(widgets/foo)`,
+		`BucketDeleted(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a simple value retrieved via Bucket() returns a nil.
 func TestBucket_Bucket_IncompatibleValue(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		widgets, err := tx.CreateBucket([]byte("widgets"))
@@ -818,11 +1007,18 @@ func TestBucket_Bucket_IncompatibleValue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that creating a bucket on an existing non-bucket key returns an error.
 func TestBucket_CreateBucket_IncompatibleValue(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		widgets, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -839,11 +1035,18 @@ func TestBucket_CreateBucket_IncompatibleValue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that deleting a bucket on an existing non-bucket key returns an error.
 func TestBucket_DeleteBucket_IncompatibleValue(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		widgets, err := tx.CreateBucket([]byte("widgets"))
@@ -860,11 +1063,18 @@ func TestBucket_DeleteBucket_IncompatibleValue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure bucket can set and update its sequence number.
 func TestBucket_Sequence(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		bkt, err := tx.CreateBucket([]byte("0"))
@@ -901,11 +1111,18 @@ func TestBucket_Sequence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(0)`,
+		`SequenceUpdated(0, 1000)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can return an autoincrementing sequence.
 func TestBucket_NextSequence(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		widgets, err := tx.CreateBucket([]byte("widgets"))
@@ -941,13 +1158,23 @@ func TestBucket_NextSequence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(woojits)`,
+		`SequenceUpdated(widgets, 1)`,
+		`SequenceUpdated(widgets, 2)`,
+		`SequenceUpdated(woojits, 1)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket will persist an autoincrementing sequence even if its
 // the only thing updated on the bucket.
 // https://github.com/boltdb/bolt/issues/296
 func TestBucket_NextSequence_Persist(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucket([]byte("widgets")); err != nil {
@@ -978,11 +1205,23 @@ func TestBucket_NextSequence_Persist(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`SequenceUpdated(widgets, 1)`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(4)`,
+		`SequenceUpdated(widgets, 2)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that retrieving the next sequence on a read-only bucket returns an error.
 func TestBucket_NextSequence_ReadOnly(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucket([]byte("widgets")); err != nil {
@@ -1002,11 +1241,17 @@ func TestBucket_NextSequence_ReadOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that retrieving the next sequence for a bucket on a closed database return an error.
 func TestBucket_NextSequence_Closed(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	tx, err := db.Begin(true)
 	if err != nil {
 		t.Fatal(err)
@@ -1021,11 +1266,17 @@ func TestBucket_NextSequence_Closed(t *testing.T) {
 	if _, err := b.NextSequence(); err != berrors.ErrTxClosed {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxRolledBack()`,
+	)
 }
 
 // Ensure a user can loop over all key/value pairs in a bucket.
 func TestBucket_ForEach(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	type kv struct {
 		k []byte
@@ -1071,10 +1322,20 @@ func TestBucket_ForEach(t *testing.T) {
 		return nil
 	})
 	assert.NoErrorf(t, err, "db.View failed")
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "0000")`,
+		`KeyUpdated(widgets, "baz", "0001")`,
+		`KeyUpdated(widgets, "bar", "0002")`,
+		`BucketCreated(widgets/csubbucket)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 func TestBucket_ForEachBucket(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	expectedItems := [][]byte{
 		[]byte("csubbucket"),
@@ -1115,10 +1376,21 @@ func TestBucket_ForEachBucket(t *testing.T) {
 		return nil
 	})
 	assert.NoErrorf(t, err, "db.View failed")
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "0000")`,
+		`BucketCreated(widgets/zsubbucket)`,
+		`KeyUpdated(widgets, "baz", "0001")`,
+		`KeyUpdated(widgets, "bar", "0002")`,
+		`BucketCreated(widgets/csubbucket)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 func TestBucket_ForEachBucket_NoBuckets(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	verifyReads := func(b *bolt.Bucket) {
 		var items [][]byte
@@ -1152,11 +1424,19 @@ func TestBucket_ForEachBucket_NoBuckets(t *testing.T) {
 		return nil
 	})
 	assert.NoErrorf(t, err, "db.View failed")
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "0000")`,
+		`KeyUpdated(widgets, "baz", "0001")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure a database can stop iteration early.
 func TestBucket_ForEach_ShortCircuit(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -1190,11 +1470,20 @@ func TestBucket_ForEach_ShortCircuit(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "bar", "0000")`,
+		`KeyUpdated(widgets, "baz", "0000")`,
+		`KeyUpdated(widgets, "foo", "0000")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that looping over a bucket on a closed database returns an error.
 func TestBucket_ForEach_Closed(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	tx, err := db.Begin(true)
 	if err != nil {
@@ -1213,11 +1502,17 @@ func TestBucket_ForEach_Closed(t *testing.T) {
 	if err := b.ForEach(func(k, v []byte) error { return nil }); err != berrors.ErrTxClosed {
 		t.Fatalf("unexpected error: %s", err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxRolledBack()`,
+	)
 }
 
 // Ensure that an error is returned when inserting with an empty key.
 func TestBucket_Put_EmptyKey(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
@@ -1234,11 +1529,17 @@ func TestBucket_Put_EmptyKey(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that an error is returned when inserting with a key that's too large.
 func TestBucket_Put_KeyTooLarge(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -1251,6 +1552,12 @@ func TestBucket_Put_KeyTooLarge(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that an error is returned when inserting a value that's too large.
@@ -1260,7 +1567,7 @@ func TestBucket_Put_ValueTooLarge(t *testing.T) {
 		t.Skip("not enough RAM for test")
 	}
 
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
@@ -1274,6 +1581,12 @@ func TestBucket_Put_ValueTooLarge(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure a bucket can calculate stats.

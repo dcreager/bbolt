@@ -213,7 +213,11 @@ func (b *Bucket) CreateBucket(key []byte) (rb *Bucket, err error) {
 	// to be treated as a regular, non-inline bucket for the rest of the tx.
 	b.page = nil
 
-	return b.Bucket(newKey), nil
+	child := b.Bucket(newKey)
+	if b.tx.db.journal != nil {
+		b.tx.db.journal.BucketCreated(child)
+	}
+	return child, nil
 }
 
 // CreateBucketIfNotExists creates a new bucket if it doesn't already exist and returns a reference to it.
@@ -282,7 +286,11 @@ func (b *Bucket) CreateBucketIfNotExists(key []byte) (rb *Bucket, err error) {
 	// to be treated as a regular, non-inline bucket for the rest of the tx.
 	b.page = nil
 
-	return b.Bucket(newKey), nil
+	child := b.Bucket(newKey)
+	if b.tx.db.journal != nil {
+		b.tx.db.journal.BucketCreated(child)
+	}
+	return child, nil
 }
 
 // DeleteBucket deletes a bucket at the given key.
@@ -340,6 +348,10 @@ func (b *Bucket) DeleteBucket(key []byte) (err error) {
 
 	// Delete the node if we have a matching key.
 	c.node().del(newKey)
+
+	if b.tx.db.journal != nil {
+		b.tx.db.journal.BucketDeleted(child)
+	}
 
 	return nil
 }
@@ -415,6 +427,11 @@ func (b *Bucket) MoveBucket(key []byte, dstBucket *Bucket) (err error) {
 	// add te sub-bucket to the destination bucket
 	newValue := cloneBytes(v)
 	curDst.node().put(newKey, newKey, newValue, 0, common.BucketLeafFlag)
+
+	if b.tx.db.journal != nil {
+		moved := dstBucket.Bucket(newKey)
+		b.tx.db.journal.BucketMoved(b, moved)
+	}
 
 	return nil
 }
@@ -506,6 +523,9 @@ func (b *Bucket) Put(key []byte, value []byte) (err error) {
 	// gofail: var beforeBucketPut struct{}
 
 	c.node().put(newKey, newKey, value, 0, 0)
+	if b.tx.db.journal != nil {
+		b.tx.db.journal.KeyUpdated(b, newKey, value)
+	}
 
 	return nil
 }
@@ -547,6 +567,9 @@ func (b *Bucket) Delete(key []byte) (err error) {
 
 	// Delete the node if we have a matching key.
 	c.node().del(key)
+	if b.tx.db.journal != nil {
+		b.tx.db.journal.KeyDeleted(b, key)
+	}
 
 	return nil
 }
@@ -572,6 +595,9 @@ func (b *Bucket) SetSequence(v uint64) error {
 
 	// Set the sequence.
 	b.SetInSequence(v)
+	if b.tx.db.journal != nil {
+		b.tx.db.journal.SequenceUpdated(b, v)
+	}
 	return nil
 }
 
@@ -591,7 +617,11 @@ func (b *Bucket) NextSequence() (uint64, error) {
 
 	// Increment and return the sequence.
 	b.IncSequence()
-	return b.Sequence(), nil
+	seq := b.Sequence()
+	if b.tx.db.journal != nil {
+		b.tx.db.journal.SequenceUpdated(b, seq)
+	}
+	return seq, nil
 }
 
 // ForEach executes a function for each key/value pair in a bucket.

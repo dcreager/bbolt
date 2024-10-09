@@ -188,6 +188,15 @@ func (tx *Tx) Commit() (err error) {
 		return berrors.ErrTxNotWritable
 	}
 
+	if tx.db.journal != nil {
+		err = tx.db.journal.WriteTxCommitted()
+		if err != nil {
+			lg.Errorf("error commiting transaction to journal: %v", err)
+			tx.rollback()
+			return err
+		}
+	}
+
 	// TODO(benbjohnson): Use vectorized I/O to write out dirty pages.
 
 	// Rebalance nodes which have had deletions.
@@ -303,6 +312,9 @@ func (tx *Tx) Rollback() error {
 	common.Assert(!tx.managed, "managed tx rollback not allowed")
 	if tx.db == nil {
 		return berrors.ErrTxClosed
+	}
+	if tx.writable && tx.db.journal != nil {
+		tx.db.journal.WriteTxRolledBack()
 	}
 	tx.nonPhysicalRollback()
 	return nil

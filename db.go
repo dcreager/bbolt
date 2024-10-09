@@ -116,7 +116,8 @@ type DB struct {
 	// Supported only on Unix via mlock/munlock syscalls.
 	Mlock bool
 
-	logger Logger
+	logger  Logger
+	journal Journal
 
 	path     string
 	openFile func(string, int, os.FileMode) (*os.File, error)
@@ -202,6 +203,8 @@ func Open(path string, mode os.FileMode, options *Options) (db *DB, err error) {
 	} else {
 		db.logger = options.Logger
 	}
+
+	db.journal = options.Journal
 
 	lg := db.Logger()
 	if lg != discardLogger {
@@ -845,6 +848,9 @@ func (db *DB) beginRWTx() (*Tx, error) {
 	t.init(db)
 	db.rwtx = t
 	db.freelist.ReleasePendingPages()
+	if db.journal != nil {
+		db.journal.WriteTxStarted(uint64(t.meta.Txid()))
+	}
 	return t, nil
 }
 
@@ -1330,6 +1336,10 @@ type Options struct {
 
 	// Logger is the logger used for bbolt.
 	Logger Logger
+
+	// Journal is the journal that will be used to inspect all writes to the
+	// database.
+	Journal Journal
 }
 
 func (o *Options) String() string {

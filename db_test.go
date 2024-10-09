@@ -825,7 +825,7 @@ func testDB_Close_PendingTx(t *testing.T, writable bool) {
 
 // Ensure a database can provide a transactional block.
 func TestDB_Update(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -856,6 +856,15 @@ func TestDB_Update(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`KeyUpdated(widgets, "baz", "bat")`,
+		`KeyDeleted(widgets, "foo")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure a closed database returns an error while running a transaction block
