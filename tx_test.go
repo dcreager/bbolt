@@ -126,7 +126,7 @@ func TestTx_Commit_ErrTxNotWritable(t *testing.T) {
 
 // Ensure that a transaction can retrieve a cursor on the root bucket.
 func TestTx_Cursor(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucket([]byte("widgets")); err != nil {
 			t.Fatal(err)
@@ -159,6 +159,13 @@ func TestTx_Cursor(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`BucketCreated(woojits)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that creating a bucket with a read-only transaction returns an error.
@@ -193,7 +200,7 @@ func TestTx_CreateBucket_ErrTxClosed(t *testing.T) {
 
 // Ensure that a Tx can retrieve a bucket.
 func TestTx_Bucket(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucket([]byte("widgets")); err != nil {
 			t.Fatal(err)
@@ -205,11 +212,17 @@ func TestTx_Bucket(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a Tx retrieving a non-existent key returns nil.
 func TestTx_Get_NotFound(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucket([]byte("widgets"))
 		if err != nil {
@@ -226,11 +239,18 @@ func TestTx_Get_NotFound(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`KeyUpdated(widgets, "foo", "bar")`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can be created and retrieved.
 func TestTx_CreateBucket(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	// Create a bucket.
 	if err := db.Update(func(tx *bolt.Tx) error {
@@ -254,11 +274,17 @@ func TestTx_CreateBucket(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a bucket can be created if it doesn't already exist.
 func TestTx_CreateBucketIfNotExists(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 	if err := db.Update(func(tx *bolt.Tx) error {
 		// Create bucket.
 		if b, err := tx.CreateBucketIfNotExists([]byte("widgets")); err != nil {
@@ -288,6 +314,12 @@ func TestTx_CreateBucketIfNotExists(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure transaction returns an error if creating an unnamed bucket.
@@ -483,7 +515,7 @@ func TestTx_ForEach_WithError(t *testing.T) {
 
 // Ensure that Tx commit handlers are called after a transaction successfully commits.
 func TestTx_OnCommit(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	var x int
 	if err := db.Update(func(tx *bolt.Tx) error {
@@ -498,11 +530,17 @@ func TestTx_OnCommit(t *testing.T) {
 	} else if x != 3 {
 		t.Fatalf("unexpected x: %d", x)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that Tx commit handlers are NOT called after a transaction rolls back.
 func TestTx_OnCommit_Rollback(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	var x int
 	if err := db.Update(func(tx *bolt.Tx) error {
@@ -517,6 +555,12 @@ func TestTx_OnCommit_Rollback(t *testing.T) {
 	} else if x != 0 {
 		t.Fatalf("unexpected x: %d", x)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`WriteTxRolledBack()`,
+	)
 }
 
 // Ensure that the database can be copied to a file path.

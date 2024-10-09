@@ -237,7 +237,7 @@ func TestCursor_Seek(t *testing.T) {
 }
 
 func TestCursor_Delete(t *testing.T) {
-	db := btesting.MustCreateDB(t)
+	db := btesting.MustCreateDBWithJournal(t)
 
 	const count = 1000
 
@@ -247,6 +247,7 @@ func TestCursor_Delete(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		db.Journal.Pause()
 		for i := 0; i < count; i += 1 {
 			k := make([]byte, 8)
 			binary.BigEndian.PutUint64(k, uint64(i))
@@ -254,6 +255,7 @@ func TestCursor_Delete(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		db.Journal.Resume()
 		if _, err := b.CreateBucket([]byte("sub")); err != nil {
 			t.Fatal(err)
 		}
@@ -266,11 +268,17 @@ func TestCursor_Delete(t *testing.T) {
 		c := tx.Bucket([]byte("widgets")).Cursor()
 		bound := make([]byte, 8)
 		binary.BigEndian.PutUint64(bound, uint64(count/2))
+		i := 0
 		for key, _ := c.First(); bytes.Compare(key, bound) < 0; key, _ = c.Next() {
 			if err := c.Delete(); err != nil {
 				t.Fatal(err)
 			}
+			if i == 1 {
+				db.Journal.Pause()
+			}
+			i += 1
 		}
+		db.Journal.Resume()
 
 		c.Seek([]byte("sub"))
 		if err := c.Delete(); err != errors.ErrIncompatibleValue {
@@ -291,6 +299,19 @@ func TestCursor_Delete(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	db.Journal.Verify(t,
+		`WriteTxStarted(2)`,
+		`BucketCreated(widgets)`,
+		`// snip`,
+		`BucketCreated(widgets/sub)`,
+		`WriteTxCommitted()`,
+		`WriteTxStarted(3)`,
+		`KeyDeleted(widgets, "\x00\x00\x00\x00\x00\x00\x00\x00")`,
+		`KeyDeleted(widgets, "\x00\x00\x00\x00\x00\x00\x00\x01")`,
+		`// snip`,
+		`WriteTxCommitted()`,
+	)
 }
 
 // Ensure that a Tx cursor can seek to the appropriate keys when there are a

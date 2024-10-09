@@ -151,6 +151,10 @@ func (c *Cursor) Delete() error {
 	}
 	c.node().del(key)
 
+	if c.bucket.tx.db.journal != nil {
+		c.bucket.tx.db.journal.KeyDeleted(c.bucket, key)
+	}
+
 	return nil
 }
 

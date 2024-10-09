@@ -27,12 +27,19 @@ const (
 // DB is a test wrapper for bolt.DB.
 type DB struct {
 	*bolt.DB
-	f string
-	o *bolt.Options
-	t testing.TB
+	f       string
+	o       *bolt.Options
+	t       testing.TB
+	Journal *StringJournal
 }
 
 // MustCreateDB returns a new, open DB at a temporary location.
+func MustCreateDBWithJournal(t testing.TB) *DB {
+	f := filepath.Join(t.TempDir(), "db")
+	j := &StringJournal{}
+	return MustOpenDBFull(t, f, nil, j)
+}
+
 func MustCreateDB(t testing.TB) *DB {
 	return MustCreateDBWithOption(t, nil)
 }
@@ -44,9 +51,17 @@ func MustCreateDBWithOption(t testing.TB, o *bolt.Options) *DB {
 }
 
 func MustOpenDBWithOption(t testing.TB, f string, o *bolt.Options) *DB {
+	return MustOpenDBFull(t, f, o, nil)
+}
+
+func MustOpenDBFull(t testing.TB, f string, o *bolt.Options, j *StringJournal) *DB {
 	t.Logf("Opening bbolt DB at: %s", f)
 	if o == nil {
-		o = bolt.DefaultOptions
+		o = &bolt.Options{}
+		*o = *bolt.DefaultOptions
+	}
+	if j != nil {
+		o.Journal = j
 	}
 
 	freelistType := bolt.FreelistArrayType
@@ -59,10 +74,11 @@ func MustOpenDBWithOption(t testing.TB, f string, o *bolt.Options) *DB {
 	db, err := bolt.Open(f, 0600, o)
 	require.NoError(t, err)
 	resDB := &DB{
-		DB: db,
-		f:  f,
-		o:  o,
-		t:  t,
+		DB:      db,
+		f:       f,
+		o:       o,
+		t:       t,
+		Journal: j,
 	}
 	resDB.strictModeEnabledDefault()
 	t.Cleanup(resDB.PostTestCleanup)
