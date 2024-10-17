@@ -680,7 +680,17 @@ func (db *DB) Close() error {
 	db.mmaplock.Lock()
 	defer db.mmaplock.Unlock()
 
-	return db.close()
+	if err := db.close(); err != nil {
+		return err
+	}
+
+	if db.journal != nil {
+		if err := db.journal.DatabaseClosed(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (db *DB) close() error {
@@ -1096,7 +1106,17 @@ func (db *DB) Sync() (err error) {
 		}()
 	}
 
-	return fdatasync(db)
+	if err := fdatasync(db); err != nil {
+		return err
+	}
+
+	if db.journal != nil {
+		if err := db.journal.DatabaseSynced(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Stats retrieves ongoing performance stats for the database.

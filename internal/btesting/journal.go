@@ -112,6 +112,22 @@ func (j *StringJournal) WriteTxRolledBack() {
 	j.WriteString("WriteTxRolledBack()\n")
 }
 
+func (j *StringJournal) DatabaseSynced() error {
+	if j.paused {
+		return nil
+	}
+	j.WriteString("DatabaseSynced()\n")
+	return nil
+}
+
+func (j *StringJournal) DatabaseClosed() error {
+	if j.paused {
+		return nil
+	}
+	j.WriteString("DatabaseClosed()\n")
+	return nil
+}
+
 func (j *StringJournal) writeFullBucketName(b *bolt.Bucket) {
 	if p := b.Parent(); p != nil {
 		j.writeFullBucketName(p)

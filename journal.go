@@ -42,4 +42,15 @@ type Journal interface {
 	// WriteTxRolledBack is called after the current write transaction is rolled
 	// back.
 	WriteTxRolledBack()
+
+	// DatabaseSynced is called after the database is manually synced (that is,
+	// when [Db.Sync] is called explicitly).  This method is _not_ called after
+	// the sync that is performed at the close of each transaction.  If this
+	// method returns an error, that error is returned from [Db.Sync].
+	DatabaseSynced() error
+
+	// DatabaseClosed is called after the database is closed.  If this method
+	// returns an error, that error is returned from [Db.Close].  (The database
+	// is still closed in this case.)
+	DatabaseClosed() error
 }

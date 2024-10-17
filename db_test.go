@@ -49,7 +49,9 @@ func TestOpen(t *testing.T) {
 	path := tempfile()
 	defer os.RemoveAll(path)
 
-	db, err := bolt.Open(path, 0600, nil)
+	var j btesting.StringJournal
+	opts := bolt.Options{Journal: &j}
+	db, err := bolt.Open(path, 0600, &opts)
 	if err != nil {
 		t.Fatal(err)
 	} else if db == nil {
@@ -63,6 +65,10 @@ func TestOpen(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+
+	j.Verify(t,
+		`DatabaseClosed()`,
+	)
 }
 
 // Regression validation for https://github.com/etcd-io/bbolt/pull/122.
