@@ -3,6 +3,7 @@ package bbolt
 import (
 	"bytes"
 	"fmt"
+	"iter"
 	"unsafe"
 
 	"go.etcd.io/bbolt/errors"
@@ -595,6 +596,24 @@ func (b *Bucket) ForEach(fn func(k, v []byte) error) error {
 	return nil
 }
 
+// Each ranges over each key/value pair in a bucket.
+// The keys are iterated in lexicographic order.
+// If the transaction is already closed, the loop body is never executed.
+// You must not modify the bucket during iteration; doing so results in undefined behavior.
+func (b *Bucket) Each() iter.Seq2[[]byte, []byte] {
+	return func(yield func(k, v []byte) bool) {
+		if b.tx.db == nil {
+			return
+		}
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			if !yield(k, v) {
+				return
+			}
+		}
+	}
+}
+
 func (b *Bucket) ForEachBucket(fn func(k []byte) error) error {
 	if b.tx.db == nil {
 		return errors.ErrTxClosed
@@ -608,6 +627,28 @@ func (b *Bucket) ForEachBucket(fn func(k []byte) error) error {
 		}
 	}
 	return nil
+}
+
+// EachBucket ranges over each child bucket in this bucket.
+// The buckets are iterated in lexicographic order.
+// If the transaction is already closed, the loop body is never executed.
+// You must not modify the parent bucket during iteration; doing so results in undefined behavior.
+func (b *Bucket) EachBucket() iter.Seq2[int, []byte] {
+	return func(yield func(i int, k []byte) bool) {
+		if b.tx.db == nil {
+			return
+		}
+		i := 0
+		c := b.Cursor()
+		for k, _, flags := c.first(); k != nil; k, _, flags = c.next() {
+			if flags&common.BucketLeafFlag != 0 {
+				if !yield(i, k) {
+					return
+				}
+				i++
+			}
+		}
+	}
 }
 
 // Stats returns stats on a bucket.

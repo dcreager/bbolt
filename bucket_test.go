@@ -1167,6 +1167,194 @@ func TestBucket_ForEach_Closed(t *testing.T) {
 	}
 }
 
+// Ensure a user can loop over all key/value pairs in a bucket.
+func TestBucket_Each(t *testing.T) {
+	db := btesting.MustCreateDB(t)
+
+	type kv struct {
+		k []byte
+		v []byte
+	}
+
+	expectedItems := []kv{
+		{k: []byte("bar"), v: []byte("0002")},
+		{k: []byte("baz"), v: []byte("0001")},
+		{k: []byte("csubbucket"), v: nil},
+		{k: []byte("foo"), v: []byte("0000")},
+	}
+
+	verifyReads := func(b *bolt.Bucket) {
+		var items []kv
+		for k, v := range b.Each() {
+			items = append(items, kv{k: k, v: v})
+		}
+		assert.Equal(t, expectedItems, items, "what we iterated (Each) is not what we put")
+	}
+
+	err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("widgets"))
+		require.NoError(t, err, "bucket creation failed")
+
+		require.NoErrorf(t, b.Put([]byte("foo"), []byte("0000")), "put 'foo' failed")
+		require.NoErrorf(t, b.Put([]byte("baz"), []byte("0001")), "put 'baz' failed")
+		require.NoErrorf(t, b.Put([]byte("bar"), []byte("0002")), "put 'bar' failed")
+		_, err = b.CreateBucket([]byte("csubbucket"))
+		require.NoErrorf(t, err, "creation of subbucket failed")
+
+		verifyReads(b)
+
+		return nil
+	})
+	require.NoErrorf(t, err, "db.Update failed")
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("widgets"))
+		require.NotNil(t, b, "bucket opening failed")
+		verifyReads(b)
+		return nil
+	})
+	assert.NoErrorf(t, err, "db.View failed")
+}
+
+func TestBucket_EachBucket(t *testing.T) {
+	db := btesting.MustCreateDB(t)
+
+	expectedItems := [][]byte{
+		[]byte("csubbucket"),
+		[]byte("zsubbucket"),
+	}
+
+	verifyReads := func(b *bolt.Bucket) {
+		var indices []int
+		var items [][]byte
+		for i, k := range b.EachBucket() {
+			indices = append(indices, i)
+			items = append(items, k)
+		}
+		assert.Equal(t, expectedItems, items, "what we iterated (Each) is not what we put")
+		assert.Equal(t, []int{0, 1}, indices)
+	}
+
+	err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("widgets"))
+		require.NoError(t, err, "bucket creation failed")
+
+		require.NoErrorf(t, b.Put([]byte("foo"), []byte("0000")), "put 'foo' failed")
+		_, err = b.CreateBucket([]byte("zsubbucket"))
+		require.NoErrorf(t, err, "creation of subbucket failed")
+		require.NoErrorf(t, b.Put([]byte("baz"), []byte("0001")), "put 'baz' failed")
+		require.NoErrorf(t, b.Put([]byte("bar"), []byte("0002")), "put 'bar' failed")
+		_, err = b.CreateBucket([]byte("csubbucket"))
+		require.NoErrorf(t, err, "creation of subbucket failed")
+
+		verifyReads(b)
+
+		return nil
+	})
+	assert.NoErrorf(t, err, "db.Update failed")
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("widgets"))
+		require.NotNil(t, b, "bucket opening failed")
+		verifyReads(b)
+		return nil
+	})
+	assert.NoErrorf(t, err, "db.View failed")
+}
+
+func TestBucket_EachBucket_NoBuckets(t *testing.T) {
+	db := btesting.MustCreateDB(t)
+
+	verifyReads := func(b *bolt.Bucket) {
+		var items [][]byte
+		for _, k := range b.EachBucket() {
+			items = append(items, k)
+		}
+		assert.Emptyf(t, items, "what we iterated (Each) is not what we put")
+	}
+
+	err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("widgets"))
+		require.NoError(t, err, "bucket creation failed")
+
+		require.NoErrorf(t, b.Put([]byte("foo"), []byte("0000")), "put 'foo' failed")
+		require.NoErrorf(t, err, "creation of subbucket failed")
+		require.NoErrorf(t, b.Put([]byte("baz"), []byte("0001")), "put 'baz' failed")
+		require.NoErrorf(t, err, "creation of subbucket failed")
+
+		verifyReads(b)
+
+		return nil
+	})
+	require.NoErrorf(t, err, "db.Update failed")
+
+	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("widgets"))
+		require.NotNil(t, b, "bucket opening failed")
+		verifyReads(b)
+		return nil
+	})
+	assert.NoErrorf(t, err, "db.View failed")
+}
+
+// Ensure a database can stop iteration early.
+func TestBucket_Each_ShortCircuit(t *testing.T) {
+	db := btesting.MustCreateDB(t)
+	if err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucket([]byte("widgets"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Put([]byte("bar"), []byte("0000")); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Put([]byte("baz"), []byte("0000")); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Put([]byte("foo"), []byte("0000")); err != nil {
+			t.Fatal(err)
+		}
+
+		var index int
+		for k := range tx.Bucket([]byte("widgets")).Each() {
+			index++
+			if bytes.Equal(k, []byte("baz")) {
+				break
+			}
+		}
+		if index != 2 {
+			t.Fatalf("unexpected index: %d", index)
+		}
+
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Ensure that looping over a bucket on a closed database does nothing.
+func TestBucket_Each_Closed(t *testing.T) {
+	db := btesting.MustCreateDB(t)
+
+	tx, err := db.Begin(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := tx.CreateBucket([]byte("widgets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	bodyExecuted := false
+	for range b.Each() {
+		bodyExecuted = true
+	}
+	assert.False(t, bodyExecuted)
+}
+
 // Ensure that an error is returned when inserting with an empty key.
 func TestBucket_Put_EmptyKey(t *testing.T) {
 	db := btesting.MustCreateDB(t)

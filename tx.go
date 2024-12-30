@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"runtime"
 	"sort"
@@ -157,6 +158,20 @@ func (tx *Tx) ForEach(fn func(name []byte, b *Bucket) error) error {
 	return tx.root.ForEach(func(k, v []byte) error {
 		return fn(k, tx.root.Bucket(k))
 	})
+}
+
+// Each ranges over each bucket in the root.
+// The buckets are iterated in lexicographic order.
+// If the transaction is already closed, the loop body is never executed.
+// You must not create or remove any root buckets during iteration; doing so results in undefined behavior.
+func (tx *Tx) Each() iter.Seq2[[]byte, *Bucket] {
+	return func(yield func([]byte, *Bucket) bool) {
+		for k := range tx.root.Each() {
+			if !yield(k, tx.root.Bucket(k)) {
+				return
+			}
+		}
+	}
 }
 
 // OnCommit adds a handler function to be executed after the transaction successfully commits.
